@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terraform Drift Detection Metrics - TELECOM ARGENTINA</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --telecom-blue: #0066CC;
+            --telecom-light-blue: #E6F2FF;
+            --telecom-dark-blue: #004799;
+            --success-green: #28a745;
+            --warning-yellow: #ffc107;
+            --danger-red: #dc3545;
+            --light-gray: #f8f9fa;
+            --medium-gray: #6c757d;
+            --dark-gray: #343a40;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: var(--dark-gray);
+            background-color: #fff;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--telecom-blue), var(--telecom-dark-blue));
+            color: white;
+            text-align: center;
+            padding: 30px 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 2.2em;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header .subtitle {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .report-info {
+            background: var(--light-gray);
+            border-left: 4px solid var(--telecom-blue);
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 5px;
+        }
+
+        .report-info h2 {
+            color: var(--telecom-blue);
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+        }
+
+        .info-item strong {
+            min-width: 120px;
+            color: var(--telecom-dark-blue);
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .section-title {
+            color: var(--telecom-blue);
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--telecom-light-blue);
+        }
+
+        .chart-container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 400px;
+            margin: 20px 0;
+        }
+
+        .table-container {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .repo-section {
+            margin-bottom: 30px;
+        }
+
+        .repo-header {
+            background: var(--telecom-blue);
+            color: white;
+            padding: 15px 20px;
+            font-size: 1.2em;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .repo-count {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.9em;
+        }
+
+        .issues-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .issues-table th {
+            background: var(--telecom-light-blue);
+            color: var(--telecom-dark-blue);
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid var(--telecom-blue);
+        }
+
+        .issues-table td {
+            padding: 12px;
+            border-bottom: 1px solid #e9ecef;
+            vertical-align: top;
+        }
+
+        .issues-table tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+
+        .issues-table tr:hover {
+            background-color: var(--telecom-light-blue);
+        }
+
+        .issue-id {
+            font-weight: 600;
+            color: var(--telecom-blue);
+        }
+
+        .issue-title {
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+
+        .issue-state {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .state-open {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .state-closed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .author-info {
+            font-size: 0.9em;
+            color: var(--medium-gray);
+        }
+
+        .summary-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-top: 4px solid var(--telecom-blue);
+        }
+
+        .stat-number {
+            font-size: 2.5em;
+            font-weight: 700;
+            color: var(--telecom-blue);
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: var(--medium-gray);
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: var(--medium-gray);
+            border-top: 1px solid #e9ecef;
+            margin-top: 40px;
+        }
+
+        .no-issues {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--medium-gray);
+        }
+
+        .no-issues-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            .header h1 {
+                font-size: 1.8em;
+            }
+
+            .issues-table {
+                font-size: 0.85em;
+            }
+
+            .issues-table th,
+            .issues-table td {
+                padding: 8px;
+            }
+
+            .chart-wrapper {
+                height: 300px;
+            }
+        }
+
+        @media print {
+            .chart-wrapper {
+                height: 300px;
+            }
+            
+            .container {
+                max-width: none;
+                margin: 0;
+                padding: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>📡 TERRAFORM DRIFT DETECTION METRICS</h1>
+            <div class="subtitle">TELECOM ARGENTINA - Sistema de Monitoreo de Infraestructura</div>
+        </div>
+
+        <!-- Report Information -->
+        <div class="report-info">
+            <h2>📋 Información del Reporte</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <strong>{{target_type}}:</strong>
+                    <span>{{target}}</span>
+                </div>
+                <div class="info-item">
+                    <strong>Período:</strong>
+                    <span>{{start_date}} a {{end_date}}</span>
+                </div>
+                <div class="info-item">
+                    <strong>Total de Issues:</strong>
+                    <span>{{total_issues}}</span>
+                </div>
+                <div class="info-item">
+                    <strong>Generado:</strong>
+                    <span>{{generation_date}}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Statistics -->
+        <div class="summary-stats">
+            <div class="stat-card">
+                <div class="stat-number">{{total_issues}}</div>
+                <div class="stat-label">Issues Totales</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{{total_repos}}</div>
+                <div class="stat-label">Repositorios Afectados</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{{period_days}}</div>
+                <div class="stat-label">Días Analizados</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{{avg_issues_per_day}}</div>
+                <div class="stat-label">Promedio Diario</div>
+            </div>
+        </div>
+
+        <!-- Timeline Chart -->
+        <div class="section">
+            <h2 class="section-title">📈 Evolución Temporal de Issues</h2>
+            <div class="chart-container">
+                <div class="chart-wrapper">
+                    <canvas id="timelineChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Issues Details -->
+        <div class="section">
+            <h2 class="section-title">📊 Detalle de Issues por Repositorio</h2>
+            
+            {{repos_html}}
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>🚀 Generado por Sistema de Monitoreo de Infraestructura - TELECOM ARGENTINA</p>
+            <p>Sistema automatizado de detección de drift en Terraform</p>
+        </div>
+    </div>
+
+    <script>
+        // Datos del timeline (se llenarán desde Python)
+        const timelineData = {{{timeline_data_json}}};
+        
+        // Configurar gráfico de timeline
+        const ctx = document.getElementById('timelineChart').getContext('2d');
+        
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: timelineData.labels,
+                datasets: [{
+                    label: 'Issues Detectados',
+                    data: timelineData.data,
+                    borderColor: '#0066CC',
+                    backgroundColor: 'rgba(0, 102, 204, 0.1)',
+                    borderWidth: 2,
+                    pointBackgroundColor: '#0066CC',
+                    pointBorderColor: '#0066CC',
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    fill: true,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Issues de Drift Detectado por Día',
+                        font: {
+                            size: 16,
+                            weight: 'bold'
+                        },
+                        color: '#0066CC'
+                    },
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    }
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Fecha',
+                            font: {
+                                weight: 'bold'
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.1)'
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Número de Issues',
+                            font: {
+                                weight: 'bold'
+                            }
+                        },
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.1)'
+                        },
+                        ticks: {
+                            stepSize: 1
+                        }
+                    }
+                },
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                elements: {
+                    point: {
+                        hoverBackgroundColor: '#004799'
+                    }
+                }
+            }
+        });
+
+        // Hacer el gráfico responsivo
+        window.addEventListener('resize', function() {
+            chart.resize();
+        });
+    </script>
+</body>
+</html>
