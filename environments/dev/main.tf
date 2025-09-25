@@ -33,12 +33,3 @@ module "ec2" {
   # Add other EC2 configuration as needed
 }
 
-# GitHub OIDC Provider and Role
-module "github_oidc" {
-  source = "../../modules/github-oidc"
-  
-  project_name            = var.project_name
-  github_org              = var.github_org
-  github_repo             = var.github_repo
-  terraform_state_bucket  = var.terraform_state_bucket
-}
