@@ -1,0 +1,84 @@
+name: 🚀 Terraform Apply
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'environments/prod/**'
+      - 'modules/**'
+  
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Ambiente a desplegar'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - dev
+          - staging  
+          - prod
+      action:
+        description: 'Acción a ejecutar'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - plan
+          - apply
+
+env:
+  TF_VERSION: '1.6.0'
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  terraform-apply:
+    name: 🚀 Deploy ${{ github.event.inputs.environment || 'prod' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'prod' }}
+    
+    permissions:
+      id-token: write
+      contents: read
+      
+    steps:
+      - name: ✅ Checkout código
+        uses: actions/checkout@v4
+        
+      - name: 🔧 Configurar AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: 🏗️ Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          
+      - name: ⚡ Terraform Init
+        working-directory: ./environments/${{ github.event.inputs.environment || 'prod' }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ github.event.inputs.environment || 'prod' }}/${{ secrets.TF_STATE_KEY }}" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+            
+      - name: 📊 Terraform Plan
+        working-directory: ./environments/${{ github.event.inputs.environment || 'prod' }}
+        run: terraform plan -input=false -out=tfplan
+        
+      - name: 🚀 Terraform Apply
+        if: github.event.inputs.action == 'apply' || github.event_name == 'push'
+        working-directory: ./environments/${{ github.event.inputs.environment || 'prod' }}
+        run: terraform apply -auto-approve tfplan
+        
+      - name: 📊 Terraform Output
+        working-directory: ./environments/${{ github.event.inputs.environment || 'prod' }}
+        run: terraform output -json > terraform-outputs.json
+        
+      - name: 📄 Upload Terraform Outputs
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-outputs-${{ github.event.inputs.environment || 'prod' }}
+          path: ./environments/${{ github.event.inputs.environment || 'prod' }}/terraform-outputs.json

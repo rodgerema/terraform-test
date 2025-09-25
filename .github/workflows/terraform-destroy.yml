@@ -1,0 +1,55 @@
+name: 🔥 Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: '⚠️ Ambiente a DESTRUIR'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+      confirm_destroy:
+        description: 'Escribir "DESTROY" para confirmar'
+        required: true
+
+jobs:
+  terraform-destroy:
+    name: 🔥 Destroy ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: destroy-${{ github.event.inputs.environment }}
+    
+    if: github.event.inputs.confirm_destroy == 'DESTROY'
+    
+    steps:
+      - name: ⚠️ Confirmación de Destroy
+        run: |
+          echo "🔥 DESTRUYENDO AMBIENTE: ${{ github.event.inputs.environment }}"
+          echo "⚠️ Esta acción es IRREVERSIBLE"
+          
+      - name: ✅ Checkout código
+        uses: actions/checkout@v4
+        
+      - name: 🔧 Configurar AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          
+      - name: 🏗️ Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.6.0'
+          
+      - name: ⚡ Terraform Init
+        working-directory: ./environments/${{ github.event.inputs.environment }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ github.event.inputs.environment }}/${{ secrets.TF_STATE_KEY }}" \
+            -backend-config="region=${{ secrets.AWS_REGION }}"
+            
+      - name: 🔥 Terraform Destroy
+        working-directory: ./environments/${{ github.event.inputs.environment }}
+        run: terraform destroy -auto-approve
