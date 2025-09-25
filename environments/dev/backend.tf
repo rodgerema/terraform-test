@@ -5,8 +5,6 @@ terraform {
     
     dynamodb_table = "terraform-locks"
     
-    # Versionado del state
-    versioning = true
   }
   
   required_version = ">= 1.6.0"

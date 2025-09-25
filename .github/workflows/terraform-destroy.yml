@@ -20,6 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: destroy-${{ github.event.inputs.environment }}
     
+    permissions:
+      id-token: write
+      contents: read
+    
     if: github.event.inputs.confirm_destroy == 'DESTROY'
     
     steps:
