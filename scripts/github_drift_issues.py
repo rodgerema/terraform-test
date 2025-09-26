@@ -132,8 +132,8 @@ class TelecomDriftDetector:
   • librería matplotlib (opcional, para gráficos)
   
 🚀 USO: 
-  export GITHUB_TOKEN="your_token"
-  export GITHUB_URL="https://github.com/owner/repo"
+  export GH_TOKEN="your_token"
+  export GH_URL="https://github.com/owner/repo"
   python3 github_drift_issues.py
   
   • Automáticamente analiza los últimos 30 días
@@ -199,8 +199,8 @@ class TelecomDriftDetector:
     
     def get_env_config(self):
         """Obtener configuración desde variables de entorno"""
-        self.api_key = os.getenv('GITHUB_TOKEN')
-        github_url = os.getenv('GITHUB_URL')
+        self.api_key = os.getenv('GH_TOKEN')
+        github_url = os.getenv('GH_URL')
         
         # Las fechas están configuradas por defecto en __init__ para los últimos 30 días
         # No se permiten fechas personalizadas
@@ -208,9 +208,9 @@ class TelecomDriftDetector:
         # Validar variables requeridas
         missing_vars = []
         if not self.api_key:
-            missing_vars.append('GITHUB_TOKEN')
+            missing_vars.append('GH_TOKEN')
         if not github_url:
-            missing_vars.append('GITHUB_URL')
+            missing_vars.append('GH_URL')
         
         if missing_vars:
             self.console.print_error(f"Variables de entorno faltantes: {', '.join(missing_vars)}")
@@ -652,8 +652,8 @@ def main():
         if not detector.get_env_config():
             # Si no se pueden obtener las variables de entorno, terminar el programa
             detector.console.print_error("El script requiere las siguientes variables de entorno:")
-            detector.console.print_error("  GITHUB_TOKEN: Token de acceso a GitHub")
-            detector.console.print_error("  GITHUB_URL: URL del repositorio u organización de GitHub")
+            detector.console.print_error("  GH_TOKEN: Token de acceso a GitHub")
+            detector.console.print_error("  GH_URL: URL del repositorio u organización de GitHub")
             detector.console.print_error("")
             detector.console.print_info("El script analiza automáticamente los últimos 30 días")
             sys.exit(1)
