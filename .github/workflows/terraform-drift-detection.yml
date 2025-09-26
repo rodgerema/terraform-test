@@ -44,8 +44,8 @@ jobs:
           
       - name: 🔍 Ejecutar detección de drift
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_URL: ${{ github.server_url }}/${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           python scripts/github_drift_issues.py
           
