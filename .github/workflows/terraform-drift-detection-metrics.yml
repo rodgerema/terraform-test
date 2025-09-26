@@ -1,0 +1,70 @@
+name: 🔍 Terraform Drift Detection
+
+on:
+  schedule:
+    # Ejecutar todos los días a las 8:00 AM UTC
+    - cron: '0 8 * * *'
+  
+  # Permitir ejecución manual desde la interfaz de GitHub
+  workflow_dispatch:
+
+env:
+  TF_VERSION: '1.6.0'
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  drift-detection:
+    name: 📊 Detectar Issues de Drift
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+      issues: write
+      
+    steps:
+      - name: ✅ Checkout código
+        uses: actions/checkout@v4
+        
+      - name: 🐍 Configurar Python 3.x
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+          
+      - name: 📦 Instalar dependencias Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scripts/requirements.txt
+          
+      - name: 📥 Usar archivos locales de drift detection
+        run: |
+          # Los archivos ya están en el repositorio
+          ls -la scripts/
+          ls -la templates/
+          
+      - name: 🔍 Ejecutar detección de drift
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          python scripts/github_drift_issues.py
+          
+      - name: 📄 Subir reporte HTML como artefacto
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drift-detection-report-${{ github.run_number }}
+          path: "*.html"
+          retention-days: 30
+          
+      - name: 📊 Mostrar resumen en logs
+        if: always()
+        run: |
+          echo "### 🔍 Resumen de Drift Detection" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if ls *.html 1> /dev/null 2>&1; then
+            echo "✅ Reporte HTML generado exitosamente" >> $GITHUB_STEP_SUMMARY
+            echo "📁 Revisa los artefactos para descargar el reporte completo" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "ℹ️ No se encontraron issues de drift en los últimos 30 días" >> $GITHUB_STEP_SUMMARY
+          fi

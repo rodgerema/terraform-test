@@ -1,70 +1,130 @@
-name: 🔍 Terraform Drift Detection
+name: Terraform Drift Detection
 
 on:
   schedule:
-    # Ejecutar todos los días a las 8:00 AM UTC
-    - cron: '0 8 * * *'
-  
-  # Permitir ejecución manual desde la interfaz de GitHub
-  workflow_dispatch:
+    - cron: '0 6 * * *'  # Run daily at 6 AM UTC
+  workflow_dispatch:  # Allow manual trigger
 
 env:
-  TF_VERSION: '1.6.0'
-  AWS_REGION: ${{ secrets.AWS_REGION }}
+  TF_VERSION: '1.5.0'
 
 jobs:
-  drift-detection:
-    name: 📊 Detectar Issues de Drift
+  terraform-drift-detection:
     runs-on: ubuntu-latest
     
     permissions:
-      id-token: write
       contents: read
       issues: write
-      
+    
     steps:
-      - name: ✅ Checkout código
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
         
-      - name: 🐍 Configurar Python 3.x
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
+    # - name: Configure Git for private modules
+    #   if: ${{ vars.TF_MODULES_TOKEN }}
+    #   run: |
+    #     git config --global url."https://oauth2:${{ secrets.TF_MODULES_TOKEN }}@github.com".insteadOf https://github.com
+        
+    - name: Terraform Drift Detection
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+      run: |
+        DRIFT_DETECTED=false
+        
+        # Process each environment directory
+        for env_dir in environments/*/; do
+          if [ -d "$env_dir" ]; then
+            workspace=$(basename "$env_dir")
+            echo "======================================================"
+            echo "🚀 Processing environment: $workspace"
+            echo "======================================================"
+            
+            cd "$env_dir"
+            
+            PLAN="plan_${workspace}.tfplan"
+            ISSUE_BODY="issue_body_${workspace}.md"
+            ec=0
+            
+            echo "Initializing Terraform for environment: $workspace"
+            terraform init -upgrade
+            
+            echo "Generating plan for environment: $workspace"
+            terraform plan -detailed-exitcode -out="$PLAN" 2> /dev/null || ec=$?
           
-      - name: 📦 Instalar dependencias Python
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r scripts/requirements.txt
+          echo "Exit code: $ec"
           
-      - name: 📥 Usar archivos locales de drift detection
-        run: |
-          # Los archivos ya están en el repositorio
-          ls -la scripts/
-          ls -la templates/
+          case $ec in
+            0)
+              echo "✅ No changes found in environment: $workspace"
+              ;;
+            1)
+              echo "❌ Terraform command failed in environment: $workspace. Continuing..."
+              ;;
+            2)
+              echo "⚠️ Changes found in environment '$workspace'. Generating notifications..."
+              DRIFT_DETECTED=true
+              
+              # 1. Create issue body from plan
+              echo '```diff' > "${ISSUE_BODY}"
+              terraform show -no-color "${PLAN}" >> "${ISSUE_BODY}"
+              echo '```' >> "${ISSUE_BODY}"
+              sed -i -e 's/  +/+/g' -e 's/  ~/~/g' -e 's/  /-/' "${ISSUE_BODY}"
+              MESSAGE=$(cat "${ISSUE_BODY}")
+              
+              # 2. Generate unique hash for the message
+              UNIQUE_HASH=$(echo -n "${MESSAGE}" | sha256sum | cut -d' ' -f1 | head -c 8)
+              ISSUE_TITLE="Drift detected in environment: ${workspace} (${UNIQUE_HASH})"
+              
+              echo "Hash: $UNIQUE_HASH"
+              echo "Title: $ISSUE_TITLE"
+              
+              # 3. Check if issue already exists with this hash
+              echo "Checking if issue already exists for this drift..."
+              EXISTING_ISSUE=$(gh issue list --state open --search "$UNIQUE_HASH in:title" --json title --jq '.[0].title // empty')
+              
+              if [ -n "$EXISTING_ISSUE" ]; then
+                echo "⚠️ Drift was already detected previously. No new issue will be created."
+                echo "Existing issue found with hash: ${UNIQUE_HASH}"
+              else
+                echo "Creating GitHub issue for environment '$workspace'..."
+                gh issue create \
+                  --title "$ISSUE_TITLE" \
+                  --body "$MESSAGE" \
+                  --label "terraform,drift-detection,infrastructure" || echo "Error creating issue, continuing..."
+              fi
+              
+              # 4. Send Teams notification
+              if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+                echo "Creating Teams message..."
+                cat <<EOF > payload_teams.json
+                {
+                  "text": "Changes detected in infrastructure for environment **${workspace}** in project **${GITHUB_REPOSITORY}**"
+                }
+        EOF
+                curl -X POST -H "Content-Type: application/json" -d @payload_teams.json "$TEAMS_WEBHOOK_URL" || echo "Error sending Teams notification, continuing..."
+              else
+                echo "Teams webhook URL not defined. Skipping notification."
+              fi
+              ;;
+          esac
           
-      - name: 🔍 Ejecutar detección de drift
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          GH_URL: ${{ github.server_url }}/${{ github.repository }}
-        run: |
-          python scripts/github_drift_issues.py
-          
-      - name: 📄 Subir reporte HTML como artefacto
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: drift-detection-report-${{ github.run_number }}
-          path: "*.html"
-          retention-days: 30
-          
-      - name: 📊 Mostrar resumen en logs
-        if: always()
-        run: |
-          echo "### 🔍 Resumen de Drift Detection" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if ls *.html 1> /dev/null 2>&1; then
-            echo "✅ Reporte HTML generado exitosamente" >> $GITHUB_STEP_SUMMARY
-            echo "📁 Revisa los artefactos para descargar el reporte completo" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "ℹ️ No se encontraron issues de drift en los últimos 30 días" >> $GITHUB_STEP_SUMMARY
+          # Return to root directory for next iteration
+          cd - > /dev/null
+          echo
+        done
+        
+        echo "======================================================"
+        echo "✅ Drift detection process completed."
+        echo "======================================================"
+        
+        if [ "$DRIFT_DETECTED" = true ]; then
+          echo "::warning::Terraform drift detected in one or more environments. Check the created issues for details."
+        fi
           fi
+        done
