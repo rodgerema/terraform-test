@@ -117,6 +117,7 @@ jobs:
           # Return to root directory for next iteration
           cd - > /dev/null
           echo
+          fi
         done
         
         echo "======================================================"
@@ -126,5 +127,3 @@ jobs:
         if [ "$DRIFT_DETECTED" = true ]; then
           echo "::warning::Terraform drift detected in one or more environments. Check the created issues for details."
         fi
-          fi
-        done
