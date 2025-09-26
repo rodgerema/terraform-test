@@ -1,4 +1,4 @@
-name: 🔍 Terraform Drift Detection Metrics
+name: 📊 Terraform Drift Detection Metrics
 
 on:
   schedule:

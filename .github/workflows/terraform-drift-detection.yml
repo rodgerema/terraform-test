@@ -1,4 +1,4 @@
-name: Terraform Drift Detection
+name: 🔍 Terraform Drift Detection
 
 on:
   schedule:
