@@ -6,13 +6,15 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 env:
-  TF_VERSION: '1.5.0'
+  TF_VERSION: '1.6.0'
+  AWS_REGION: ${{ secrets.AWS_REGION }}
 
 jobs:
   terraform-drift-detection:
     runs-on: ubuntu-latest
     
     permissions:
+      id-token: write
       contents: read
       issues: write
     
@@ -20,8 +22,14 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       
+    - name: 🔧 Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ env.AWS_REGION }}
+        
     - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
+      uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: ${{ env.TF_VERSION }}
         
@@ -52,7 +60,10 @@ jobs:
             ec=0
             
             echo "Initializing Terraform for environment: $workspace"
-            terraform init -upgrade
+            terraform init --upgrade \
+              -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+              -backend-config="key=${workspace}/${{ secrets.TF_STATE_KEY }}" \
+              -backend-config="region=${{ env.AWS_REGION }}"
             
             echo "Generating plan for environment: $workspace"
             terraform plan -detailed-exitcode -out="$PLAN" 2> /dev/null || ec=$?
