@@ -12,6 +12,7 @@ env:
 jobs:
   terraform-drift-detection:
     runs-on: ubuntu-latest
+    environment: DEV
     
     permissions:
       id-token: write
