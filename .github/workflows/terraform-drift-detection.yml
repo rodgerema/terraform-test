@@ -53,17 +53,16 @@ jobs:
         echo "Obteniendo lista de workspaces..."
         terraform workspace list | sed 's/^[ *]*//;/^$/d' > workspaces.txt
 
+        cat workspaces.txt
+
         DRIFT_DETECTED=false
         
         # Process each environment directory
-        for env_dir in environments/*/; do
-          if [ -d "$env_dir" ]; then
-            workspace=$(basename "$env_dir")
+        while IFS= read -r workspace
+        do
             echo "======================================================"
             echo "🚀 Processing environment: $workspace"
             echo "======================================================"
-            
-            cd "$env_dir"
             
             PLAN="plan_${workspace}.tfplan"
             ISSUE_BODY="issue_body_${workspace}.md"
@@ -131,12 +130,8 @@ jobs:
               fi
               ;;
           esac
-          
-          # Return to root directory for next iteration
-          cd - > /dev/null
           echo
-          fi
-        done
+        done < "workspaces.txt"
         
         echo "======================================================"
         echo "✅ Drift detection process completed."
