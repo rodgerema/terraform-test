@@ -4,6 +4,16 @@ on:
   schedule:
     - cron: '0 6 * * *'  # Run daily at 6 AM UTC
   workflow_dispatch:  # Allow manual trigger
+    inputs:
+      environment:
+        description: 'Environment to check for drift'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
 
 env:
   TF_VERSION: '1.6.0'
@@ -34,17 +44,13 @@ jobs:
       with:
         terraform_version: ${{ env.TF_VERSION }}
         
-    # - name: Configure Git for private modules
-    #   if: ${{ vars.TF_MODULES_TOKEN }}
-    #   run: |
-    #     git config --global url."https://oauth2:${{ secrets.TF_MODULES_TOKEN }}@github.com".insteadOf https://github.com
-        
     - name: Terraform Drift Detection
       env:
         GH_TOKEN: ${{ secrets.GH_TOKEN }}
         TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
       run: |
-
+        cd environments/${{ github.event.inputs.environment || 'dev' }}
+        
         terraform init -upgrade \
               -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
               -backend-config="key=${workspace}/${{ secrets.TF_STATE_KEY }}" \
