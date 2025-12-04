@@ -43,6 +43,7 @@ jobs:
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
         
     - name: Terraform Drift Detection
       env:
@@ -57,7 +58,7 @@ jobs:
               -backend-config="region=${{ env.AWS_REGION }}"
 
         echo "Obteniendo lista de workspaces..."
-        terraform workspace list | sed 's/^[ *]*//;/^$/d' > workspaces.txt
+        terraform workspace list | sed 's/^[ *]*//;/^$/d' | grep -E '^[a-zA-Z0-9_-]+$' > workspaces.txt
 
         cat workspaces.txt
 
