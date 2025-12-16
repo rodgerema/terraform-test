@@ -1,0 +1,345 @@
+name: 🔍 Terraform Drift Detection (GCB)
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Run daily at 6 AM UTC
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      target:
+        description: 'Specific environment/account (empty for all)'
+        required: false
+        type: string
+      aws_region:
+        description: 'AWS Region'
+        required: false
+        default: 'us-east-2'
+        type: string
+
+env:
+  TF_VERSION: '1.6.0'
+  TARGETS_DIR: 'environments'
+
+jobs:
+  discover:
+    name: 'Discover Environments'
+    runs-on: ubuntu-latest
+    outputs:
+      target_array: ${{ steps.get-targets.outputs.target_array }}
+      target_count: ${{ steps.get-targets.outputs.target_count }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Discover environment directories
+      id: get-targets
+      run: |
+        echo "🔍 Discovering environments in $TARGETS_DIR..."
+
+        # Si se especificó un target específico, usarlo
+        if [ -n "${{ github.event.inputs.target }}" ]; then
+          TARGET="${{ github.event.inputs.target }}"
+          echo "🎯 Using specific target: $TARGET"
+
+          # Verificar que el directorio existe
+          if [ ! -d "$TARGETS_DIR/$TARGET" ]; then
+            echo "❌ Error: Directory $TARGETS_DIR/$TARGET does not exist"
+            exit 1
+          fi
+
+          echo "target_array=[\"$TARGET\"]" >> $GITHUB_OUTPUT
+          echo "target_count=1" >> $GITHUB_OUTPUT
+        else
+          # Descubrir todos los directorios en environments/
+          echo "🔍 Scanning all directories in $TARGETS_DIR/"
+
+          # Listar directorios (excluir archivos)
+          TARGETS=$(find $TARGETS_DIR -maxdepth 1 -mindepth 1 -type d -exec basename {} \; | sort | jq -R -s -c 'split("\n")[:-1]')
+
+          # Contar targets
+          COUNT=$(echo "$TARGETS" | jq 'length')
+
+          echo "target_array=$TARGETS" >> $GITHUB_OUTPUT
+          echo "target_count=$COUNT" >> $GITHUB_OUTPUT
+
+          echo "📋 Discovered $COUNT environment(s):"
+          echo "$TARGETS" | jq -r '.[]' | while read -r env; do
+            echo "  - $env"
+          done
+        fi
+
+  drift-detection:
+    name: 'Drift: ${{ matrix.target }}'
+    runs-on: ubuntu-latest
+    needs: discover
+
+    # Solo ejecutar si hay targets descubiertos
+    if: needs.discover.outputs.target_count > 0
+
+    environment: production
+
+    permissions:
+      contents: read
+      issues: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.discover.outputs.target_array) }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ github.event.inputs.aws_region || 'us-east-2' }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
+
+    - name: Terraform Drift Detection
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        TARGET: ${{ matrix.target }}
+        AWS_REGION: ${{ github.event.inputs.aws_region || 'us-east-2' }}
+      run: |
+        set -e
+
+        echo "======================================================"
+        echo "🚀 Processing environment: $TARGET"
+        echo "📍 Region: $AWS_REGION"
+        echo "======================================================"
+
+        WORK_DIR="$TARGETS_DIR/$TARGET"
+
+        # Verificar que el directorio existe
+        if [ ! -d "$WORK_DIR" ]; then
+          echo "❌ Error: Directory $WORK_DIR does not exist"
+          exit 1
+        fi
+
+        cd "$WORK_DIR"
+
+        # Verificar que hay archivos .tf
+        if ! ls *.tf 1> /dev/null 2>&1; then
+          echo "⚠️ Warning: No .tf files found in $WORK_DIR, skipping..."
+          exit 0
+        fi
+
+        echo "📂 Working directory: $(pwd)"
+        echo "📄 Terraform files found:"
+        ls -1 *.tf
+        echo ""
+
+        # Inicializar Terraform
+        echo "🔧 Initializing Terraform..."
+        terraform init -upgrade
+
+        if [ $? -ne 0 ]; then
+          echo "❌ Terraform init failed"
+          exit 1
+        fi
+
+        # Ejecutar plan con detailed-exitcode
+        PLAN="plan_${TARGET}.tfplan"
+        ISSUE_BODY="issue_body_${TARGET}.md"
+        ec=0
+
+        echo ""
+        echo "📊 Generating Terraform plan..."
+        terraform plan -detailed-exitcode -out="$PLAN" 2>&1 || ec=$?
+
+        echo "Exit code: $ec"
+        echo ""
+
+        case $ec in
+          0)
+            echo "✅ No changes found in environment: $TARGET"
+            echo "Infrastructure is in sync with Terraform configuration."
+            ;;
+          1)
+            echo "❌ Terraform plan command failed in environment: $TARGET"
+            echo "This indicates an error in the Terraform configuration or state."
+            exit 1
+            ;;
+          2)
+            echo "⚠️  Drift detected in environment: $TARGET"
+            echo "Infrastructure has diverged from Terraform configuration."
+            echo ""
+
+            # 1. Create issue body from plan
+            echo "📝 Generating issue content..."
+            echo '```diff' > "${ISSUE_BODY}"
+            terraform show -no-color "${PLAN}" >> "${ISSUE_BODY}"
+            echo '```' >> "${ISSUE_BODY}"
+
+            # Formatear output para mejor legibilidad en GitHub
+            sed -i -e 's/  +/+/g' -e 's/  ~/~/g' -e 's/  /-/' "${ISSUE_BODY}"
+            MESSAGE=$(cat "${ISSUE_BODY}")
+
+            # 2. Generate unique hash for the message
+            UNIQUE_HASH=$(echo -n "${MESSAGE}" | sha256sum | cut -d' ' -f1 | head -c 8)
+            ISSUE_TITLE="Drift detected in environment: ${TARGET} (${UNIQUE_HASH})"
+
+            echo "🔑 Hash: $UNIQUE_HASH"
+            echo "📋 Title: $ISSUE_TITLE"
+            echo ""
+
+            # 3. Check if issue already exists with this hash
+            echo "🔍 Checking if issue already exists for this drift..."
+            EXISTING_ISSUE=$(gh issue list --state open --search "$UNIQUE_HASH in:title" --json title --jq '.[0].title // empty')
+
+            if [ -n "$EXISTING_ISSUE" ]; then
+              echo "⚠️  Drift was already detected previously."
+              echo "📌 Existing issue found with hash: ${UNIQUE_HASH}"
+              echo "🔗 No new issue will be created to avoid duplicates."
+            else
+              echo "📬 Creating GitHub issue for environment '$TARGET'..."
+
+              # Agregar metadata al cuerpo del issue
+              FULL_MESSAGE="## Drift Detection Report
+
+**Environment:** \`${TARGET}\`
+**Region:** \`${AWS_REGION}\`
+**Detection Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+**Repository:** ${GITHUB_REPOSITORY}
+**Workflow Run:** [View Details](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
+
+---
+
+## Changes Detected
+
+${MESSAGE}
+
+---
+
+**Action Required:** Please review the changes and either:
+1. Apply the Terraform changes if they are expected
+2. Update the Terraform configuration if the infrastructure changes are correct
+3. Investigate and remediate any unauthorized changes
+
+**Note:** This issue will be automatically closed when the drift is resolved."
+
+              ISSUE_URL=$(gh issue create \
+                --title "$ISSUE_TITLE" \
+                --body "$FULL_MESSAGE" 2>&1)
+
+              if [ $? -eq 0 ]; then
+                echo "✅ Issue created successfully!"
+                echo "🔗 Issue URL: $ISSUE_URL"
+                echo ""
+
+                # Try to add labels if they exist (non-blocking)
+                echo "🏷️  Attempting to add labels..."
+                gh issue edit "$ISSUE_URL" --add-label "terraform,drift-detection,infrastructure" 2>/dev/null && echo "✅ Labels added successfully" || echo "⚠️  Labels not added (may not exist in repo)"
+              else
+                echo "❌ Error creating issue: $ISSUE_URL"
+              fi
+            fi
+            echo ""
+
+            # 4. Send Teams notification
+            if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+              echo "📢 Sending Teams notification..."
+
+              cat <<EOF > payload_teams.json
+{
+  "@type": "MessageCard",
+  "@context": "https://schema.org/extensions",
+  "summary": "Terraform Drift Detected",
+  "themeColor": "FF6B35",
+  "title": "🔍 Terraform Drift Detected",
+  "sections": [
+    {
+      "activityTitle": "Infrastructure drift detected in **${TARGET}**",
+      "activitySubtitle": "Project: ${GITHUB_REPOSITORY}",
+      "facts": [
+        {
+          "name": "Environment:",
+          "value": "${TARGET}"
+        },
+        {
+          "name": "Region:",
+          "value": "${AWS_REGION}"
+        },
+        {
+          "name": "Detection Time:",
+          "value": "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+        }
+      ],
+      "markdown": true
+    }
+  ],
+  "potentialAction": [
+    {
+      "@type": "OpenUri",
+      "name": "View Workflow Run",
+      "targets": [
+        {
+          "os": "default",
+          "uri": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+        }
+      ]
+    }
+  ]
+}
+EOF
+
+              RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Content-Type: application/json" -d @payload_teams.json "$TEAMS_WEBHOOK_URL")
+              HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+
+              if [ "$HTTP_CODE" -eq 200 ]; then
+                echo "✅ Teams notification sent successfully"
+              else
+                echo "⚠️  Error sending Teams notification (HTTP $HTTP_CODE)"
+              fi
+            else
+              echo "ℹ️  Teams webhook URL not configured, skipping notification."
+            fi
+
+            echo ""
+            echo "::warning::Terraform drift detected in environment: $TARGET"
+            ;;
+        esac
+
+        echo "======================================================"
+        echo "✅ Drift detection completed for environment: $TARGET"
+        echo "======================================================"
+
+  summary:
+    name: 'Drift Detection Summary'
+    runs-on: ubuntu-latest
+    needs: [discover, drift-detection]
+    if: always()
+
+    steps:
+    - name: Generate Summary
+      run: |
+        echo "# 🔍 Terraform Drift Detection Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Workflow Run:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Environments Scanned" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Total:** ${{ needs.discover.outputs.target_count }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ needs.drift-detection.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        if [ "${{ needs.drift-detection.result }}" = "success" ]; then
+          echo "✅ All environments checked successfully. Check individual job logs for drift details." >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ needs.drift-detection.result }}" = "failure" ]; then
+          echo "❌ Some environments failed. Check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ Drift detection completed with warnings or was skipped." >> $GITHUB_STEP_SUMMARY
+        fi
