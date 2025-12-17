@@ -115,7 +115,7 @@ jobs:
 
         echo "======================================================"
         echo "🚀 Processing environment: $TARGET"
-        echo "📍 Region: $AWS_REGION"
+        echo "📍 Primary Region: $AWS_REGION"
         echo "======================================================"
 
         WORK_DIR="$TARGETS_DIR/$TARGET"
@@ -139,14 +139,79 @@ jobs:
         ls -1 *.tf
         echo ""
 
-        # Inicializar Terraform
-        echo "🔧 Initializing Terraform..."
-        terraform init -upgrade
-
-        if [ $? -ne 0 ]; then
-          echo "❌ Terraform init failed"
-          exit 1
+        # Detectar providers y regiones configuradas
+        echo "🔍 Detecting configured AWS providers and regions..."
+        REGIONS_DETECTED=""
+        if [ -f "provider.tf" ]; then
+          REGIONS_DETECTED=$(grep -E '^\s*region\s*=' provider.tf | sed 's/.*=\s*"\([^"]*\)".*/\1/' | sort -u | tr '\n' ', ' | sed 's/,$//')
+          if [ -n "$REGIONS_DETECTED" ]; then
+            echo "📍 Detected regions: $REGIONS_DETECTED"
+          else
+            REGIONS_DETECTED="$AWS_REGION"
+          fi
+        else
+          REGIONS_DETECTED="$AWS_REGION"
         fi
+        echo ""
+
+        # Inicializar Terraform (con manejo de errores)
+        echo "🔧 Initializing Terraform..."
+        set +e  # Temporalmente permitir errores
+        INIT_OUTPUT=$(terraform init -upgrade 2>&1)
+        INIT_EXIT_CODE=$?
+        set -e  # Reactivar modo estricto
+
+        echo "$INIT_OUTPUT"
+
+        if [ $INIT_EXIT_CODE -ne 0 ]; then
+          echo ""
+          echo "❌ Terraform init failed with exit code: $INIT_EXIT_CODE"
+          echo ""
+
+          # Verificar si es un error de validación de variables
+          if echo "$INIT_OUTPUT" | grep -q "Invalid reference in variable validation"; then
+            echo "⚠️  Configuration Error: Invalid variable validation detected"
+            echo "📝 Creating issue to report configuration problem..."
+
+            # Crear issue para reportar el error de configuración
+            ERROR_HASH=$(echo -n "$INIT_OUTPUT" | sha256sum | cut -d' ' -f1 | head -c 8)
+            ERROR_TITLE="Configuration Error in environment: ${TARGET} (${ERROR_HASH})"
+
+            # Verificar si ya existe un issue para este error
+            EXISTING_ERROR_ISSUE=$(gh issue list --state open --search "$ERROR_HASH in:title" --json title --jq '.[0].title // empty')
+
+            if [ -z "$EXISTING_ERROR_ISSUE" ]; then
+              ERROR_BODY="## Terraform Configuration Error\n\n"
+              ERROR_BODY="${ERROR_BODY}**Environment:** \`${TARGET}\`\n"
+              ERROR_BODY="${ERROR_BODY}**Region(s):** \`${REGIONS_DETECTED}\`\n"
+              ERROR_BODY="${ERROR_BODY}**Detection Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')\n"
+              ERROR_BODY="${ERROR_BODY}**Error Type:** Variable Validation Error\n"
+              ERROR_BODY="${ERROR_BODY}**Workflow Run:** [View Details](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})\n\n"
+              ERROR_BODY="${ERROR_BODY}---\n\n## Error Details\n\n"
+              ERROR_BODY="${ERROR_BODY}\`\`\`\n${INIT_OUTPUT}\n\`\`\`\n\n"
+              ERROR_BODY="${ERROR_BODY}---\n\n**Resolution Required:**\n"
+              ERROR_BODY="${ERROR_BODY}The Terraform configuration has validation errors that prevent initialization.\n"
+              ERROR_BODY="${ERROR_BODY}Variable validations can only reference the variable itself, not other variables.\n\n"
+              ERROR_BODY="${ERROR_BODY}**Common fix:** Remove cross-variable references in validation blocks and use \`precondition\` blocks in resources/modules instead."
+
+              gh issue create \
+                --title "$ERROR_TITLE" \
+                --body "$ERROR_BODY" \
+                --label "terraform,configuration-error,high-priority" 2>/dev/null || echo "⚠️  Could not create issue"
+
+              echo "✅ Configuration error issue created"
+            else
+              echo "📌 Configuration error already reported in existing issue"
+            fi
+          fi
+
+          echo ""
+          echo "⏭️  Skipping drift detection for this environment due to initialization failure"
+          echo "======================================================"
+          exit 0  # Exit gracefully to allow other environments to continue
+        fi
+
+        echo "✅ Terraform initialized successfully"
 
         # Ejecutar plan con detailed-exitcode
         PLAN="plan_${TARGET}.tfplan"
@@ -207,10 +272,16 @@ jobs:
               # Agregar metadata al cuerpo del issue
               FULL_MESSAGE="## Drift Detection Report"
               FULL_MESSAGE="${FULL_MESSAGE}\n\n**Environment:** \`${TARGET}\`"
-              FULL_MESSAGE="${FULL_MESSAGE}\n**Region:** \`${AWS_REGION}\`"
+              FULL_MESSAGE="${FULL_MESSAGE}\n**Region(s):** \`${REGIONS_DETECTED}\`"
               FULL_MESSAGE="${FULL_MESSAGE}\n**Detection Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
               FULL_MESSAGE="${FULL_MESSAGE}\n**Repository:** ${GITHUB_REPOSITORY}"
               FULL_MESSAGE="${FULL_MESSAGE}\n**Workflow Run:** [View Details](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+
+              # Si hay múltiples regiones, agregar nota
+              if echo "$REGIONS_DETECTED" | grep -q ','; then
+                FULL_MESSAGE="${FULL_MESSAGE}\n\n> **Note:** This environment has a multi-region deployment. Changes may affect resources across multiple regions."
+              fi
+
               FULL_MESSAGE="${FULL_MESSAGE}\n\n---\n\n## Changes Detected\n\n${MESSAGE}\n\n---\n\n**Action Required:** Please review the changes and either:"
               FULL_MESSAGE="${FULL_MESSAGE}\n1. Apply the Terraform changes if they are expected"
               FULL_MESSAGE="${FULL_MESSAGE}\n2. Update the Terraform configuration if the infrastructure changes are correct"
@@ -246,7 +317,7 @@ jobs:
               jq -n \
                 --arg target "$TARGET" \
                 --arg repo "$GITHUB_REPOSITORY" \
-                --arg region "$AWS_REGION" \
+                --arg regions "$REGIONS_DETECTED" \
                 --arg time "$DETECTION_TIME" \
                 --arg url "$WORKFLOW_URL" \
                 '{
@@ -260,7 +331,7 @@ jobs:
                     activitySubtitle: ("Project: " + $repo),
                     facts: [
                       {name: "Environment:", value: $target},
-                      {name: "Region:", value: $region},
+                      {name: "Region(s):", value: $regions},
                       {name: "Detection Time:", value: $time}
                     ],
                     markdown: true
