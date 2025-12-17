@@ -205,28 +205,17 @@ jobs:
               echo "📬 Creating GitHub issue for environment '$TARGET'..."
 
               # Agregar metadata al cuerpo del issue
-              FULL_MESSAGE="## Drift Detection Report
-
-**Environment:** \`${TARGET}\`
-**Region:** \`${AWS_REGION}\`
-**Detection Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-**Repository:** ${GITHUB_REPOSITORY}
-**Workflow Run:** [View Details](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
-
----
-
-## Changes Detected
-
-${MESSAGE}
-
----
-
-**Action Required:** Please review the changes and either:
-1. Apply the Terraform changes if they are expected
-2. Update the Terraform configuration if the infrastructure changes are correct
-3. Investigate and remediate any unauthorized changes
-
-**Note:** This issue will be automatically closed when the drift is resolved."
+              FULL_MESSAGE="## Drift Detection Report"
+              FULL_MESSAGE="${FULL_MESSAGE}\n\n**Environment:** \`${TARGET}\`"
+              FULL_MESSAGE="${FULL_MESSAGE}\n**Region:** \`${AWS_REGION}\`"
+              FULL_MESSAGE="${FULL_MESSAGE}\n**Detection Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+              FULL_MESSAGE="${FULL_MESSAGE}\n**Repository:** ${GITHUB_REPOSITORY}"
+              FULL_MESSAGE="${FULL_MESSAGE}\n**Workflow Run:** [View Details](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+              FULL_MESSAGE="${FULL_MESSAGE}\n\n---\n\n## Changes Detected\n\n${MESSAGE}\n\n---\n\n**Action Required:** Please review the changes and either:"
+              FULL_MESSAGE="${FULL_MESSAGE}\n1. Apply the Terraform changes if they are expected"
+              FULL_MESSAGE="${FULL_MESSAGE}\n2. Update the Terraform configuration if the infrastructure changes are correct"
+              FULL_MESSAGE="${FULL_MESSAGE}\n3. Investigate and remediate any unauthorized changes"
+              FULL_MESSAGE="${FULL_MESSAGE}\n\n**Note:** This issue will be automatically closed when the drift is resolved."
 
               ISSUE_URL=$(gh issue create \
                 --title "$ISSUE_TITLE" \
@@ -250,48 +239,38 @@ ${MESSAGE}
             if [ -n "$TEAMS_WEBHOOK_URL" ]; then
               echo "📢 Sending Teams notification..."
 
-              cat <<EOF > payload_teams.json
-{
-  "@type": "MessageCard",
-  "@context": "https://schema.org/extensions",
-  "summary": "Terraform Drift Detected",
-  "themeColor": "FF6B35",
-  "title": "🔍 Terraform Drift Detected",
-  "sections": [
-    {
-      "activityTitle": "Infrastructure drift detected in **${TARGET}**",
-      "activitySubtitle": "Project: ${GITHUB_REPOSITORY}",
-      "facts": [
-        {
-          "name": "Environment:",
-          "value": "${TARGET}"
-        },
-        {
-          "name": "Region:",
-          "value": "${AWS_REGION}"
-        },
-        {
-          "name": "Detection Time:",
-          "value": "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-        }
-      ],
-      "markdown": true
-    }
-  ],
-  "potentialAction": [
-    {
-      "@type": "OpenUri",
-      "name": "View Workflow Run",
-      "targets": [
-        {
-          "os": "default",
-          "uri": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-        }
-      ]
-    }
-  ]
-}
-EOF
+              DETECTION_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+              WORKFLOW_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+              # Create Teams webhook payload using jq
+              jq -n \
+                --arg target "$TARGET" \
+                --arg repo "$GITHUB_REPOSITORY" \
+                --arg region "$AWS_REGION" \
+                --arg time "$DETECTION_TIME" \
+                --arg url "$WORKFLOW_URL" \
+                '{
+                  "@type": "MessageCard",
+                  "@context": "https://schema.org/extensions",
+                  summary: "Terraform Drift Detected",
+                  themeColor: "FF6B35",
+                  title: "🔍 Terraform Drift Detected",
+                  sections: [{
+                    activityTitle: ("Infrastructure drift detected in **" + $target + "**"),
+                    activitySubtitle: ("Project: " + $repo),
+                    facts: [
+                      {name: "Environment:", value: $target},
+                      {name: "Region:", value: $region},
+                      {name: "Detection Time:", value: $time}
+                    ],
+                    markdown: true
+                  }],
+                  potentialAction: [{
+                    "@type": "OpenUri",
+                    name: "View Workflow Run",
+                    targets: [{os: "default", uri: $url}]
+                  }]
+                }' > payload_teams.json
 
               RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Content-Type: application/json" -d @payload_teams.json "$TEAMS_WEBHOOK_URL")
               HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
