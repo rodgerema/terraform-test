@@ -168,43 +168,22 @@ jobs:
           echo "❌ Terraform init failed with exit code: $INIT_EXIT_CODE"
           echo ""
 
-          # Verificar si es un error de validación de variables
+          # Detectar el tipo de error para logging
           if echo "$INIT_OUTPUT" | grep -q "Invalid reference in variable validation"; then
             echo "⚠️  Configuration Error: Invalid variable validation detected"
-            echo "📝 Creating issue to report configuration problem..."
-
-            # Crear issue para reportar el error de configuración
-            ERROR_HASH=$(echo -n "$INIT_OUTPUT" | sha256sum | cut -d' ' -f1 | head -c 8)
-            ERROR_TITLE="Configuration Error in environment: ${TARGET} (${ERROR_HASH})"
-
-            # Verificar si ya existe un issue para este error
-            EXISTING_ERROR_ISSUE=$(gh issue list --state open --search "$ERROR_HASH in:title" --json title --jq '.[0].title // empty')
-
-            if [ -z "$EXISTING_ERROR_ISSUE" ]; then
-              ERROR_BODY="## Terraform Configuration Error\n\n"
-              ERROR_BODY="${ERROR_BODY}**Environment:** \`${TARGET}\`\n"
-              ERROR_BODY="${ERROR_BODY}**Region(s):** \`${REGIONS_DETECTED}\`\n"
-              ERROR_BODY="${ERROR_BODY}**Detection Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')\n"
-              ERROR_BODY="${ERROR_BODY}**Error Type:** Variable Validation Error\n"
-              ERROR_BODY="${ERROR_BODY}**Workflow Run:** [View Details](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})\n\n"
-              ERROR_BODY="${ERROR_BODY}---\n\n## Error Details\n\n"
-              ERROR_BODY="${ERROR_BODY}\`\`\`\n${INIT_OUTPUT}\n\`\`\`\n\n"
-              ERROR_BODY="${ERROR_BODY}---\n\n**Resolution Required:**\n"
-              ERROR_BODY="${ERROR_BODY}The Terraform configuration has validation errors that prevent initialization.\n"
-              ERROR_BODY="${ERROR_BODY}Variable validations can only reference the variable itself, not other variables.\n\n"
-              ERROR_BODY="${ERROR_BODY}**Common fix:** Remove cross-variable references in validation blocks and use \`precondition\` blocks in resources/modules instead."
-
-              gh issue create \
-                --title "$ERROR_TITLE" \
-                --body "$ERROR_BODY" \
-                --label "terraform,configuration-error,high-priority" 2>/dev/null || echo "⚠️  Could not create issue"
-
-              echo "✅ Configuration error issue created"
-            else
-              echo "📌 Configuration error already reported in existing issue"
-            fi
+            echo "💡 Variable validations can only reference the variable itself, not other variables"
+            echo "💡 Consider using precondition blocks in resources/modules instead"
+          elif echo "$INIT_OUTPUT" | grep -q "Error loading state"; then
+            echo "⚠️  State Error: Unable to load Terraform state"
+          elif echo "$INIT_OUTPUT" | grep -q "Error configuring the backend"; then
+            echo "⚠️  Backend Error: Unable to configure Terraform backend"
+          else
+            echo "⚠️  Unknown initialization error - check logs above for details"
           fi
 
+          echo ""
+          echo "📊 Full error details logged above"
+          echo "🔗 Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           echo ""
           echo "⏭️  Skipping drift detection for this environment due to initialization failure"
           echo "======================================================"
