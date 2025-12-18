@@ -1,8 +1,8 @@
-name: 🔍 Terraform Drift Detection (GCB)
+name: Terraform Drift Detection (GCB)
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Run daily at 6 AM UTC
+    - cron: '0 9 * * *'  # Run daily at 6 AM Argentina Time (UTC-3)
   workflow_dispatch:  # Allow manual trigger
     inputs:
       target:
@@ -16,7 +16,7 @@ on:
         type: string
 
 env:
-  TF_VERSION: '1.6.0'
+  TF_VERSION: 'latest'
   TARGETS_DIR: 'environments'
 
 jobs:
@@ -106,8 +106,8 @@ jobs:
 
     - name: Terraform Drift Detection
       env:
-        GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        GH_TOKEN: ${{ secrets.GH_PAT }}
+        TEAMS_WEBHOOK_URL: ${{ vars.TEAMS_WEBHOOK_URL }}
         TARGET: ${{ matrix.target }}
         AWS_REGION: ${{ github.event.inputs.aws_region || 'us-east-2' }}
       run: |
@@ -267,9 +267,12 @@ jobs:
               FULL_MESSAGE="${FULL_MESSAGE}\n3. Investigate and remediate any unauthorized changes"
               FULL_MESSAGE="${FULL_MESSAGE}\n\n**Note:** This issue will be automatically closed when the drift is resolved."
 
+              # Usar printf para interpretar correctamente los saltos de línea
+              FORMATTED_MESSAGE=$(printf "$FULL_MESSAGE")
+              
               ISSUE_URL=$(gh issue create \
                 --title "$ISSUE_TITLE" \
-                --body "$FULL_MESSAGE" 2>&1)
+                --body "$FORMATTED_MESSAGE" 2>&1)
 
               if [ $? -eq 0 ]; then
                 echo "✅ Issue created successfully!"
@@ -277,8 +280,8 @@ jobs:
                 echo ""
 
                 # Try to add labels if they exist (non-blocking)
-                echo "🏷️  Attempting to add labels..."
-                gh issue edit "$ISSUE_URL" --add-label "terraform,drift-detection,infrastructure" 2>/dev/null && echo "✅ Labels added successfully" || echo "⚠️  Labels not added (may not exist in repo)"
+                # echo "🏷️  Attempting to add labels..."
+                # gh issue edit "$ISSUE_URL" --add-label "terraform,drift-detection,infrastructure" 2>/dev/null && echo "✅ Labels added successfully" || echo "⚠️  Labels not added (may not exist in repo)"
               else
                 echo "❌ Error creating issue: $ISSUE_URL"
               fi
@@ -322,7 +325,7 @@ jobs:
                   }]
                 }' > payload_teams.json
 
-              RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Content-Type: application/json" -d @payload_teams.json "$TEAMS_WEBHOOK_URL")
+              RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Content-Type: application/json" -d @payload_teams.json "$TEAMS_WEBHOOK_URL") || true
               HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 
               if [ "$HTTP_CODE" -eq 200 ]; then
