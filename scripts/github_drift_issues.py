@@ -504,7 +504,8 @@ class TelecomDriftDetector:
             self.console.print_info("Generando reporte HTML...")
             
             # Leer template HTML
-            template_path = os.path.join(os.path.dirname(__file__), 'templates', 'drift_report.html')
+            # El template está en la carpeta templates/ en la raíz del repo (un nivel arriba de scripts/)
+            template_path = os.path.join(os.path.dirname(__file__), '..', 'templates', 'drift_report.html')
             with open(template_path, 'r', encoding='utf-8') as f:
                 template_content = f.read()
             
