@@ -276,57 +276,62 @@ class TelecomDriftDetector:
         return all_repos
     
     def query_repo_issues(self, repo_path):
-        """Consultar issues de un repositorio específico"""
+        """Consultar issues de un repositorio específico usando la API de Issues"""
         headers = {
             'Authorization': f'token {self.api_key}',
             'Accept': 'application/vnd.github.v3+json'
         }
-        
-        # GitHub usa q (query) para búsquedas complejas
-        # Buscar "Drift detected" (inglés) que es el formato usado por terraform-drift-detection
-        query = f'repo:{repo_path} "Drift detected" in:title state:open created:{self.start_date}..{self.end_date}'
-        
-        search_url = f"{self.github_url}/search/issues"
+
+        # Usar la API de Issues directamente (más confiable que Search API)
+        issues_url = f"{self.github_url}/repos/{repo_path}/issues"
         params = {
-            'q': query,
-            'per_page': 100
+            'state': 'open',
+            'per_page': 100,
+            'since': f'{self.start_date}T00:00:00Z'
         }
-        
+
         try:
-            # Debug: mostrar la query que se está usando
-            self.console.print_info(f"Query de búsqueda: {query}")
+            self.console.print_info(f"Consultando issues del repositorio: {repo_path}")
 
-            response = requests.get(search_url, headers=headers, params=params)
-
-            # Debug: mostrar código de respuesta
+            response = requests.get(issues_url, headers=headers, params=params)
             self.console.print_info(f"Código de respuesta API: {response.status_code}")
 
             response.raise_for_status()
 
-            result = response.json()
+            all_issues = response.json()
+            self.console.print_info(f"Total de issues abiertos en el repo: {len(all_issues)}")
 
-            # Debug: mostrar total de resultados
-            total_count = result.get('total_count', 0)
-            self.console.print_info(f"Total de issues encontrados por API: {total_count}")
+            # Filtrar issues que contengan "Drift detected" en el título
+            # y que estén dentro del rango de fechas
+            filtered_issues = []
+            start_date = datetime.strptime(self.start_date, '%Y-%m-%d')
+            end_date = datetime.strptime(self.end_date, '%Y-%m-%d')
 
-            # GitHub search API devuelve un objeto con 'items'
-            if 'items' not in result:
-                self.console.print_warning(f"Respuesta sin 'items': {list(result.keys())}")
-                return []
+            for issue in all_issues:
+                title = issue.get('title', '')
+                created_at_str = issue.get('created_at', '')
 
-            issues = result['items']
+                # Verificar si el título contiene "Drift detected"
+                if 'Drift detected' not in title:
+                    continue
 
-            # Agregar información del repositorio a cada issue
-            for issue in issues:
+                # Verificar fecha de creación
+                if created_at_str:
+                    created_at = datetime.strptime(created_at_str.split('T')[0], '%Y-%m-%d')
+                    if created_at < start_date or created_at > end_date:
+                        continue
+
+                # Agregar información del repositorio
                 issue['repo_path'] = repo_path
                 issue['repo_name'] = repo_path.split('/')[-1]
-                # Mapear campos de GitHub a formato similar a GitLab
                 issue['iid'] = issue['number']
                 issue['web_url'] = issue['html_url']
-                issue['created_at'] = issue['created_at']
                 issue['author'] = issue['user']
 
-            return issues
+                filtered_issues.append(issue)
+
+            self.console.print_info(f"Issues con 'Drift detected' en el rango de fechas: {len(filtered_issues)}")
+            return filtered_issues
 
         except requests.exceptions.RequestException as e:
             self.console.print_error(f"Error en request: {str(e)}")
