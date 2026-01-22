@@ -293,17 +293,29 @@ class TelecomDriftDetector:
         }
         
         try:
+            # Debug: mostrar la query que se está usando
+            self.console.print_info(f"Query de búsqueda: {query}")
+
             response = requests.get(search_url, headers=headers, params=params)
+
+            # Debug: mostrar código de respuesta
+            self.console.print_info(f"Código de respuesta API: {response.status_code}")
+
             response.raise_for_status()
-            
+
             result = response.json()
-            
+
+            # Debug: mostrar total de resultados
+            total_count = result.get('total_count', 0)
+            self.console.print_info(f"Total de issues encontrados por API: {total_count}")
+
             # GitHub search API devuelve un objeto con 'items'
             if 'items' not in result:
+                self.console.print_warning(f"Respuesta sin 'items': {list(result.keys())}")
                 return []
-            
+
             issues = result['items']
-            
+
             # Agregar información del repositorio a cada issue
             for issue in issues:
                 issue['repo_path'] = repo_path
@@ -313,12 +325,14 @@ class TelecomDriftDetector:
                 issue['web_url'] = issue['html_url']
                 issue['created_at'] = issue['created_at']
                 issue['author'] = issue['user']
-            
+
             return issues
-            
-        except requests.exceptions.RequestException:
+
+        except requests.exceptions.RequestException as e:
+            self.console.print_error(f"Error en request: {str(e)}")
             return []
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            self.console.print_error(f"Error decodificando JSON: {str(e)}")
             return []
     
     def query_github_issues(self):
