@@ -104,7 +104,7 @@ class TelecomDriftDetector:
         """Mostrar información de ayuda"""
         self.console.print_section("AYUDA - DETECTOR DE DRIFT TELECOM ARGENTINA")
         help_text = """
-📋 OBJETIVO: Consultar issues de GitHub con título 'Drift detectado'
+📋 OBJETIVO: Consultar issues de GitHub con título 'Drift detected'
 
 🔧 CARACTERÍSTICAS:
   • Configuración vía variables de entorno
@@ -283,7 +283,8 @@ class TelecomDriftDetector:
         }
         
         # GitHub usa q (query) para búsquedas complejas
-        query = f'repo:{repo_path} "Drift detectado" in:title state:open created:{self.start_date}..{self.end_date}'
+        # Buscar "Drift detected" (inglés) que es el formato usado por terraform-drift-detection
+        query = f'repo:{repo_path} "Drift detected" in:title state:open created:{self.start_date}..{self.end_date}'
         
         search_url = f"{self.github_url}/search/issues"
         params = {
@@ -373,7 +374,7 @@ class TelecomDriftDetector:
         print()
         
         if total_issues == 0:
-            self.console.print_warning("No se encontraron issues abiertos con título 'Drift detectado' en el rango de fechas especificado.")
+            self.console.print_warning("No se encontraron issues abiertos con título 'Drift detected' en el rango de fechas especificado.")
             return
         
         # Mostrar y guardar resultados
@@ -598,7 +599,7 @@ class TelecomDriftDetector:
             <div class="no-issues">
                 <div class="no-issues-icon">📋</div>
                 <h3>No se encontraron issues de drift</h3>
-                <p>No hay issues abiertos con título 'Drift detectado' en el período especificado.</p>
+                <p>No hay issues abiertos con título 'Drift detected' en el período especificado.</p>
             </div>"""
             
             # Agregar repos_html a las variables del template
