@@ -16,7 +16,8 @@ jobs:
   drift-detection:
     name: 📊 Detectar Issues de Drift
     runs-on: ubuntu-latest
-    
+    environment: DEV
+
     permissions:
       id-token: write
       contents: read
